@@ -74,7 +74,7 @@ class FlutterTagger extends StatefulWidget {
   /// The tags in the [TextField] are styled with [TextStyle]
   /// for their associated trigger character defined in [triggerCharacterAndStyles].
   const FlutterTagger({
-    Key? key,
+    super.key,
     required this.overlay,
     required this.controller,
     required this.onSearch,
@@ -89,11 +89,10 @@ class FlutterTagger extends StatefulWidget {
     this.triggerCharactersRegex,
     this.tagTextFormatter,
     this.animationController,
-  })  : assert(
+  }) : assert(
           triggerCharacterAndStyles != const {},
           "triggerCharacterAndStyles cannot be empty",
-        ),
-        super(key: key);
+        );
 
   /// Widget shown in the overlay when search context is active.
   final Widget overlay;
@@ -164,6 +163,7 @@ class FlutterTagger extends StatefulWidget {
   State<FlutterTagger> createState() => _FlutterTaggerState();
 }
 
+/// TextField의 태그 관리 상태
 class _FlutterTaggerState extends State<FlutterTagger> {
   FlutterTaggerController get controller => widget.controller;
 
@@ -319,11 +319,11 @@ class _FlutterTaggerState extends State<FlutterTagger> {
   /// assuming that `Lucky Ebere`'s id is `6zo22531b866ce0016f9e5tt`
   String get _formattedText {
     String controllerText = controller.text;
-
     if (controllerText.isEmpty) return "";
 
-    final splitText = controllerText.split(" ");
+    if (_tags.isEmpty) return controllerText;
 
+    final splitText = controllerText.split(" ");
     List<String> result = [];
     int start = 0;
     int end = splitText.first.length;
@@ -331,8 +331,10 @@ class _FlutterTaggerState extends State<FlutterTagger> {
 
     for (int i = 0; i < length; i++) {
       final text = splitText[i];
+      final hasRegisteredTag = _tags.keys.any((tag) =>
+          tag.startIndex <= start && tag.endIndex >= start + text.length);
 
-      if (text.contains(_triggerCharactersPattern)) {
+      if (hasRegisteredTag) {
         final parsedText = _parseAndFormatNestedTags(text, start);
         result.add(parsedText);
       } else {
@@ -345,9 +347,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
       }
     }
 
-    final resultString = result.join(" ");
-
-    return resultString;
+    return result.join(" ");
   }
 
   /// Whether to not execute the [_tagListener] logic.
@@ -485,9 +485,10 @@ class _FlutterTaggerState extends State<FlutterTagger> {
       return false;
     }
     _defer = true;
+
     controller.text = _lastCachedText;
     text = _lastCachedText;
-    _defer = true;
+
     controller.selection = TextSelection.fromPosition(
       TextPosition(offset: length),
     );
@@ -510,7 +511,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
         _isTagSelected = true;
         _startOffset = i;
         _endOffset = length + 1;
-        _defer = true;
+
         controller.selection = TextSelection(
           baseOffset: _startOffset!,
           extentOffset: _endOffset!,
@@ -566,7 +567,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
   /// Non-conforming characters terminate the search context.
   /// {@endtemplate}
   late final _searchRegexPattern =
-      widget.searchRegex ?? RegExp(r'^[a-zA-Z-]*$');
+      widget.searchRegex ?? RegExp(r'^[가-힣a-zA-Z-]*$');
 
   int _lastCursorPosition = 0;
   bool _isBacktrackingToSearch = false;
@@ -605,7 +606,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
     if (!text.contains(_triggerCharactersPattern)) return false;
 
     _lastCachedText = text;
-    final length = controller.selection.base.offset - 1;
+    final length = controller.selection.baseOffset - 1;
 
     for (int i = length; i >= 0; i--) {
       if ((i == length && triggerCharacters.contains(text[i])) ||
@@ -677,6 +678,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
           _extractAndSearch(text, position);
         }
       }
+
       _onFormattedTextChanged();
       return;
     }
@@ -705,14 +707,15 @@ class _FlutterTaggerState extends State<FlutterTagger> {
         _shouldHideOverlay(true);
       } else {
         _extractAndSearch(text, position);
-        _recomputeTags(oldCachedText, text, position);
-        _lastCachedText = text;
-        return;
       }
     }
 
     if (_lastCachedText == text) {
-      if (position >= 0 && triggerCharacters.contains(text[position])) {
+      if (position >= 0 &&
+          triggerCharacters.contains(text[position]) &&
+          (position == 0 ||
+              text[position - 1] == ' ' ||
+              triggerCharacters.contains(text[position - 1]))) {
         _shouldSearch = true;
         _currentTriggerChar = text[position];
         if (widget.triggerStrategy == TriggerStrategy.eager) {
@@ -744,25 +747,16 @@ class _FlutterTaggerState extends State<FlutterTagger> {
 
     _lastCachedText = text;
 
-    if (position >= 0 && triggerCharacters.contains(text[position])) {
+    if (position >= 0 &&
+        triggerCharacters.contains(text[position]) &&
+        (position == 0 ||
+            text[position - 1] == ' ' ||
+            triggerCharacters.contains(text[position - 1]))) {
       _shouldSearch = true;
       _currentTriggerChar = text[position];
       if (widget.triggerStrategy == TriggerStrategy.eager) {
         _extractAndSearch(text, position);
       }
-      _recomputeTags(oldCachedText, text, position);
-      _onFormattedTextChanged();
-      return;
-    }
-
-    if (position >= 0 && !_searchRegexPattern.hasMatch(text[position])) {
-      _shouldSearch = false;
-    }
-
-    if (_shouldSearch && text.isNotEmpty) {
-      _extractAndSearch(text, position);
-    } else {
-      _shouldHideOverlay(true);
     }
 
     _recomputeTags(oldCachedText, text, position);
@@ -806,7 +800,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
       int index =
           text.substring(0, endOffset + 1).lastIndexOf(_currentTriggerChar);
 
-      if (index < 0) return;
+      if (index < 0 || (index > 0 && text[index - 1] != ' ')) return;
 
       final query = text.substring(
         index + 1,
@@ -892,7 +886,7 @@ class _FlutterTaggerState extends State<FlutterTagger> {
 /// [FlutterTagger]'s tags, dismissing overlay and retrieving formatted text.
 /// {@endtemplate}
 class FlutterTaggerController extends TextEditingController {
-  FlutterTaggerController({String? text}) : super(text: text);
+  FlutterTaggerController({super.text});
 
   late final Trie _trie = Trie();
   late Map<TaggedText, String> _tags;
@@ -921,10 +915,10 @@ class FlutterTaggerController extends TextEditingController {
     _deferCallback = callback;
   }
 
-  int _cursorposition = 0;
+  int _cursorPosition = 0;
 
   /// Position of the cursor in [formattedText].
-  int get cursorPosition => _cursorposition;
+  int get cursorPosition => _cursorPosition;
 
   /// Computes position of cursor in [formattedText] at [selectionOffset]
   /// in [text] by exploding tags in [text] to their formatted form (with ID).
@@ -959,9 +953,9 @@ class FlutterTaggerController extends TextEditingController {
   @override
   set selection(TextSelection newSelection) {
     if (newSelection.isValid) {
-      _cursorposition = _getCursorPosition(newSelection.baseOffset);
+      _cursorPosition = _getCursorPosition(newSelection.baseOffset);
     } else {
-      _cursorposition = _text.length;
+      _cursorPosition = _text.length;
     }
     super.selection = newSelection;
   }
@@ -1143,21 +1137,17 @@ class FlutterTaggerController extends TextEditingController {
         nestedWords.first.isNotEmpty;
 
     String triggerChar = "";
-    int triggerCharIndex = 0;
 
     for (int i = 0; i < nestedWords.length; i++) {
       final nestedWord = nestedWords[i];
 
       if (nestedWord.contains(_triggerCharactersPattern)) {
-        if (triggerChar.isNotEmpty && triggerCharIndex == i - 2) {
+        if (triggerChar.isNotEmpty) {
           spans.add(TextSpan(text: triggerChar));
           start += triggerChar.length;
-          triggerChar = "";
-          triggerCharIndex = i;
-          continue;
         }
         triggerChar = nestedWord;
-        triggerCharIndex = i;
+
         continue;
       }
 
@@ -1194,6 +1184,10 @@ class FlutterTaggerController extends TextEditingController {
       triggerChar = "";
     }
 
+    if (triggerChar.isNotEmpty) {
+      spans.add(TextSpan(text: triggerChar));
+    }
+
     return spans;
   }
 
@@ -1216,17 +1210,16 @@ class FlutterTaggerController extends TextEditingController {
         if (i < splitText.length - 1 && splitText[i + 1].isNotEmpty) {
           spans.add(const TextSpan(text: " "));
         }
-
-        start = end + 1;
-        if (i + 1 < splitText.length) {
-          end = start + splitText[i + 1].length;
-        }
       } else {
-        start = end + 1;
-        if (i + 1 < splitText.length) {
-          end = start + splitText[i + 1].length;
+        spans.add(TextSpan(text: currentText));
+        if (i < splitText.length - 1) {
+          spans.add(const TextSpan(text: " "));
         }
-        spans.add(TextSpan(text: "$currentText "));
+      }
+
+      start = end + 1;
+      if (i + 1 < splitText.length) {
+        end = start + splitText[i + 1].length;
       }
     }
     return TextSpan(children: spans, style: style);
